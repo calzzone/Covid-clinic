@@ -1,0 +1,1359 @@
+---
+title: ""
+author: "author"
+output:
+  word_document:
+    keep_md: yes
+    fig_caption: yes
+    fig_height: 7.5
+    fig_width: 3
+    toc: yes
+    toc_depth: 4
+    reference_docx: drszabo_template.docx
+  html_document: 
+    keep_md: yes
+    df_print: kable
+    theme: readable
+    fig_caption: yes
+    fig_height: 3
+    fig_width: 7.5
+    number_sections: yes
+    toc: yes
+    toc_depth: 4
+    toc_float: no
+---
+
+```{r echo=F, fig.height=4, fig.width=7, message=F, warning=F, dpi=144, results="asis", include=T}
+#```{r setup, echo=F, message=F, warning=F}
+#, results='hide'}
+library(tidyverse)
+library(magrittr)
+#library(ggExtra) # ggMarginal()
+#library(cowplot) # plot_grid
+library(ggpubr)
+library(ggthemes)
+#library(ggcorrplot)
+#library(GGally) #ggpairs
+#library(dplyr)
+library(readxl)
+library(grid)
+
+library(pander)
+panderOptions('digits', 2)
+panderOptions('round', 2)
+panderOptions('keep.trailing.zeros', TRUE)
+options(scipen = 999)
+options(digits = 3)
+
+library(knitr)
+#library(formattable)
+library(kableExtra)
+
+library(ggfortify)
+library(survival)
+
+library(Hmisc)
+#library(stringr)
+library(DescTools)
+
+
+options(knitr.table.format = "pandoc")
+
+knitr::opts_chunk$set(comment = NA)
+
+library(captioner)
+fig_caption <- captioner::captioner("Figure")
+tab_caption <- captioner::captioner("Table")
+
+options(knitr.table.format = "pandoc")
+
+MAIN.FONT <- "Arial"
+
+# set orthogonal contrasts
+# options(contrasts = c("contr.sum", "contr.poly"))
+
+# regular contrasts
+# options(contrasts = c("contr.treatment", "contr.poly"))
+
+set.seed(1)
+#```
+
+#```{r Source scripts, message=F, warning=F, echo=F, results='hide'}
+base_path = "~/Dropbox/Stats/"
+
+source(paste0(base_path, 'R library/search_for_variable.R'), echo=F)
+source(paste0(base_path, 'R library/mySSby.R'), echo=F)
+source(paste0(base_path, 'R library/mySSby3.R'), echo=F) # replace finalfit
+source(paste0(base_path, 'R library/describe_numerice1.R'), echo=F)
+source(paste0(base_path, 'R library/contingency.R'), echo=F)
+source(paste0(base_path, 'R library/describe2x2_v1.R'), echo=F)
+source(paste0(base_path, 'R library/mytheme.R'), echo=F)
+source(paste0(base_path, 'R library/assorted bits.R'), echo=F)
+source(paste0(base_path, 'R library/custom_charts.R'), echo=F)
+
+# theme_set(my_theme(base_theme = theme_grey))
+
+setwd(paste0(base_path, "2020/Covid clinic"))
+#```
+
+#```{r Import data, echo=F, message=F, warning=F, fig.height=4, fig.width=6}
+
+metadata <- suppressWarnings(read_excel("DB1.xlsx", sheet = "metadata"))
+
+baza_de_date <- suppressWarnings(read_excel("DB1.xlsx", col_types = metadata$Type)) %>% 
+  #mutate(`Invaliditate/Grad` = str_remove_all(`Invaliditate/Grad`, "x")) %>%
+  labelled::set_variable_labels(.labels = metadata$Var) %>% 
+  #mutate_if(is.character, factor) %>%
+  mutate_at(metadata$ID[ #metadata$Type %in% c("text") & 
+              metadata$Role %in% c("danu" ,"binary", "factor", "ordered", "likert")], as.factor_metadata, metadata=metadata, debug=F) %>% 
+  labelled::set_variable_labels(.labels = metadata$Label) %>%
+  #select(-c("ID", "Nume")) %>%
+  filter(`Exclude` == "no") %>%
+  select(-c(metadata$Var[metadata$Role=="exclude"])) %>%
+  select(-c(metadata$Var[metadata$Role=="id"]))
+
+#summary(baza_de_date)
+
+metadata <- make_metadata(baza_de_date, existing.metadata = metadata)
+#write.csv(metadata, "metadata.csv", na = "")
+
+
+my.groups <- list()
+
+for (gr in unique(na.omit(metadata$Group))) {
+  my.groups[[gr]] <- make_groups_metadata(gr, metadata)
+}
+
+
+for (s in metadata$Var[metadata$Role == "separate"]) {
+  #print(s)
+  temp <- separate_metadata(baza_de_date, s, metadata = metadata, exact = F, add.prefix=F)
+  #group <- metadata$Group[metadata$Var == s]
+  group <- metadata.var_to_labels(s, metadata)
+
+  # temp <- labelled::set_variable_labels(temp, .labels = names(temp))
+
+  for (x in 1:ncol(temp))
+    if (names(temp)[x] %in% names(baza_de_date))
+      names(temp)[x] <- names(temp) %+% " "
+
+  baza_de_date %<>% select(-c(s)) %>% bind_cols(temp)
+  my.groups[[group]] <- names(temp)
+  metadata <- make_metadata(DB = baza_de_date, vars = names(temp), existing.metadata = metadata,
+                            label = as.character(labelled::var_label(temp)),
+                            group = group)
+
+}
+
+baza_de_date %<>% select(unlist(my.groups, use.names = F))
+
+IgGs = "IgG " %+% 1:5
+IgMs = "IgM " %+% 1:5
+PCRs = "RT - PCR " %+% 1:5
+test_days = "Test " %+% 1:5 %+% " (days)"
+
+# for (gr in sort(names(my.groups))) {
+#   print(gr)
+#   print(summary(baza_de_date[my.groups[[gr]]]))
+# }
+# summary(baza_de_date, maxsum = 10)
+#DescTools::Desc(baza_de_date)
+
+# summary(my.groups)
+# my.groups
+
+#names(baza_de_date)
+
+#summary(baza_de_date)
+
+DB <- bind_cols( 
+  baza_de_date %>% select(c(test_days, "FO", "Confirmation date", "Clinical form")) %>% 
+    tidyr::gather("dontcare", "Days since confirmation", test_days) %>% 
+    select(c("Days since confirmation", "FO", "Confirmation date", "Clinical form")) %>% 
+    mutate(`Forma clinică` = forcats::fct_collapse(`Clinical form`, 
+                                                   `asimptomatică-ușoară` = c("asymptomatic", "mild"),
+                                                   `medie-severă` = c("intermediate", "severe", "critical"))),
+  baza_de_date %>% select(c(PCRs)) %>% tidyr::gather("dontcare", "RT - PCR", PCRs) %>% 
+    select(c("RT - PCR")) %>% mutate(`RT - PCR` = factor(`RT - PCR`, levels = c("detectable", "negative"))),
+  baza_de_date %>% select(c(IgMs)) %>% tidyr::gather("dontcare", "IgM", IgMs) %>% select(c("IgM")),
+  baza_de_date %>% select(c(IgGs)) %>% tidyr::gather("dontcare", "IgG", IgGs) %>% select(c("IgG"))
+) #%>% na.omit() # %>% mutate(`Log IgM` = log2(`IgM`), `Log IgG` = log2(`IgG`))
+
+# DB %>% group_by(FO) %>%
+#   na.omit() %>%
+#   summarise(n = n()) %>%
+#   mutate(n=factor(n)) %>%
+#   ungroup()%>%
+#   group_by(n) %>% summary()
+#   #summary
+
+  
+DB %>% 
+  mutate (`Interval` = cut(`Days since confirmation`, breaks=c(0, 3, 7, 14, 21, 28, Inf), right=T) %>% factor) %>%
+  select(c("Interval","RT - PCR", "IgM","IgG")) %>% 
+  make_summary_table(dep="Interval",# metadata = make_metadata(db, existing.metadata = metadata),
+                       g.rows = c("mean_sd", "geo_mean", "med_range", "med_iqr"), prefer="parametric")
+
+
+```
+
+# Methods
+
+Am exclus pacientii: (n=21 / 493)
+
+* la care nu am gasit data confirmarii sau data primului test
+* care au avut mai mult de +/- 14 zile intre data confirmarii si data internarii
+* care au avut mai mult de 14 zile intre data confirmarii si data primului test
+* la care data primului test a fost inainte de data confirmarii
+* duplicate (2 cazuri)
+
+Avem o problema cu decesesle. Figureaza ca decedati doar pacientii care au decedat in SCBI. Baza de date include doar vreo 500 dintre toate cazurile de COVID, deci si doar cateva decese (11) dintre toate decesele reale. Deci, avem o mortalitate de 2.3% pe esantion, care este comparabila cu mortalitatea pe judet, deci cred ca selectia cazurilor a fost ok (pentru moment).
+
+Un pacient a avut o forma asimpomatica de boala, dar a fost internat la ICU pentru altceva. Probabil mai sunt si altii care figureaza cu internare la ICU, dar pentru altceva.
+
+Pe grafice, am unit formele asimptomatice si usoare, respectiv formele intermediare, severe si crititce).
+Graficele arata doar primele 30 zile de la data confirmarii, dar calculele sunt facute cu toate datele. 
+Nu am separat internarile inainte si dupa 24 iunie, pentru ca oricum se separa de la sine daca nu au destule date.
+
+
+
+
+
+# Results
+
+For ease of analysis, we cummulated clinical forms into "mild" (asymptomatic to mild) and "severe" (intermediate to critical) clinical forms.
+
+Both IgM and IgG showed an upwards trend with time since confirmation of the infection, more pronounced for IgG values and in patients with a more severe clinical form. Since patients showed a high degree of variability and because the date of confirmation was not a perfect replacement for the date of infection (especially during the beginning of the pandemic when tests were not readily available), our data requires aggressive aggregation to reveal any patterns. As the time-dependent increase in both IgG and IgM values remains visible after factoring in various variables (only clinical severity shown), we expect it be genuine. Both antibodies had higher average and higher variability in patients with more severe forms, suggesting that severity is linked to a higher immune reactivity, at least in a subset of patients. We decided to separate patients into high / low reactivity based on IgM and IgG values at a 75% quartile threshold: patients who had at least 1 antibody measurement above the 75% quartile of all measurements in the database (2.906 for IgG and 2.607 for IgM) were classified as "high reactivity" while the others were classified as "lower reactivity" for IgM and IgG, respectively.
+
+## IgM by time and clinical form
+
+```{r echo=F, fig.height=3, fig.width=5, message=F, warning=F, dpi=600, results="asis", include=T}
+
+plt_IgM <- DB %>% #select(c("IgM", "Days since confirmation", "FO")) %>% na.omit() %>%
+  filter(!is.na(`Forma clinică`)) %>%
+  ggplot(aes(x=`Days since confirmation`)) + 
+  facet_wrap(.~`Forma clinică`, labeller = labeller(`Forma clinică` = label_prefix(my_prefix = metadata.var_to_labels("Forma clinică", metadata), sep = ": ", wrap=25))) +
+  geom_point(aes(y=`IgM`, shape=`IgM`>0.8), size=1, alpha=0.5) +
+  geom_line(aes(y=`IgM`, group=`FO`, color=as.Date(`Confirmation date`)), size=1/3, alpha=0.5) +
+  #geom_smooth(data=mean.log.IgM, aes(y=2^`mean.log.IgM`), method = lm)+
+  # geom_line(data=mean.log.IgM, inherit.aes = F, aes(x = `Days since confirmation`, y=2^`mean.log.IgM`)) +
+  # stat_summary(aes(y=`IgM`, x=`Days since confirmation`), geom = "pointrange")+
+  stat_summary(aes(y=`IgM`, x=`Days since confirmation`), geom = "line")+
+  geom_smooth(aes(y=`IgM`), method = lm, color="red")+
+  #stat_count(aes(y = ..count..), geom="line", color="blue") +
+  #scale_y_log10()+ annotation_logticks(base = 10, sides = "l", scaled = T) +
+  scale_y_log10("Log IgM", breaks = 2^c(-2:10), labels = c("1/"%+%2^c(2:1), 2^c(0:10)), limits=c(0.25, 256)) +
+  no.minor_grid.y +
+  scale_shape_circlefill() +
+  scale_colour_gradient2_tableau("Data confirmării", palette = "Temperature Diverging", trans="date",
+                                 limits =as.Date.character(c("2020-03-01", "2020-09-01")))+
+  guides(shape=F, 
+         color=F
+         # guide_colorsteps(show.limits = F, even.steps = F, ticks = 7, 
+         #                        draw.ulim=T, draw.llim=T, direction="horizontal", title.position="top",
+         #                        barwidth=unit(40, "mm"))
+         ) +  
+  legend.top_left+
+  scale_x_continuous("Durata de la confirmare (zile)", limits = c(-0.5, 31), breaks = seq(0, 100, 7)) + 
+  no.minor_grid.x 
+
+
+# rr.table
+beta.labels = data.frame(`Forma clinică` = levels(DB$`Forma clinică`)) %>% set_colnames(c("Forma clinică"))
+for (lev in beta.labels$`Forma clinică`) {
+  
+  data = DB %>% filter(`Forma clinică` == lev) %>%
+    filter(`Days since confirmation`<31)
+  fit <- lm(data = data, log2(`IgM`)~`Days since confirmation`)
+  beta.table <- broom::tidy(fit) %>% cbind( broom::confint_tidy(fit) ) %>%
+    mutate(`p-value` = scales::pvalue(p.value, add_p = T), `p-stars` = pstars(p.value)) %>%
+    mutate(label = scales::number(`estimate`, 0.001) %+% 
+             " [" %+% scales::number(`conf.low`, 0.001) %+% " - " %+% scales::number(`conf.high`, 0.001) %+% "] " %+%
+             `p-stars`)
+  beta.labels$label[beta.labels$`Forma clinică` == lev] = "beta = " %+% beta.table$label[2]
+  
+}
+
+plt_IgM <- plt_IgM + #labs(subtitle = "RR = " %+% rr.table$label[2])
+  geom_text(data=beta.labels, aes(label=`label`), x=0, y=log10(180), size=3, hjust=0, vjust=0)
+plt_IgM
+ggsave("IgM.png", plt_IgM, device = "png", height=3, width=5, units = "in", dpi=600)
+
+```
+
+## IgG by time and clinical form
+
+```{r echo=F, fig.height=3, fig.width=5, message=F, warning=F, dpi=600, results="asis", include=T}
+
+plt_IgG <- DB %>% #select(c("IgG", "Days since confirmation", "FO")) %>% na.omit() %>%
+  filter(!is.na(`Forma clinică`)) %>%
+  ggplot(aes(x=`Days since confirmation`)) + 
+  facet_wrap(.~`Forma clinică`, labeller = labeller(`Forma clinică` = label_prefix(my_prefix = metadata.var_to_labels("Forma clinică", metadata), sep = ": ", wrap=25))) +
+  geom_point(aes(y=`IgG`, shape=`IgG`>0.8), size=1, alpha=0.5) +
+  geom_line(aes(y=`IgG`, group=`FO`, color=as.Date(`Confirmation date`)), size=1/3, alpha=0.5) +
+  #geom_smooth(data=mean.log.IgG, aes(y=2^`mean.log.IgG`), method = lm)+
+  # geom_line(data=mean.log.IgG, inherit.aes = F, aes(x = `Days since confirmation`, y=2^`mean.log.IgG`)) +
+  # stat_summary(aes(y=`IgG`, x=`Days since confirmation`), geom = "pointrange")+
+  stat_summary(aes(y=`IgG`, x=`Days since confirmation`), geom = "line")+
+  geom_smooth(aes(y=`IgG`), method = lm, color="red")+
+  #stat_count(aes(y = ..count..), geom="line", color="blue") +
+  #scale_y_log10()+ annotation_logticks(base = 10, sides = "l", scaled = T) +
+  scale_y_log10("Log IgG", breaks = 2^c(-2:10), labels = c("1/"%+%2^c(2:1), 2^c(0:10)), limits=c(0.25, 256)) +
+  no.minor_grid.y +
+  scale_shape_circlefill() +
+  scale_colour_gradient2_tableau("Data confirmării", palette = "Temperature Diverging", trans="date",
+                                 limits =as.Date.character(c("2020-03-01", "2020-09-01")))+
+  guides(shape=F, 
+         color=F
+         # guide_colorsteps(show.limits = F, even.steps = F, ticks = 7, 
+         #                        draw.ulim=T, draw.llim=T, direction="horizontal", title.position="top",
+         #                        barwidth=unit(40, "mm"))
+         ) +  
+  legend.top_left+
+  scale_x_continuous("Durata de la confirmare (zile)", limits = c(-0.5, 31), breaks = seq(0, 100, 7)) + 
+  no.minor_grid.x 
+
+
+# rr.table
+beta.labels = data.frame(`Forma clinică` = levels(DB$`Forma clinică`)) %>% set_colnames(c("Forma clinică"))
+for (lev in beta.labels$`Forma clinică`) {
+  
+  data = DB %>% filter(`Forma clinică` == lev) %>%
+    filter(`Days since confirmation`<31)
+  fit <- lm(data = data, log2(`IgG`)~`Days since confirmation`) 
+  beta.table <- broom::tidy(fit) %>% cbind( broom::confint_tidy(fit) ) %>%
+    mutate(`p-value` = scales::pvalue(p.value, add_p = T), `p-stars` = pstars(p.value)) %>%
+    mutate(label = scales::number(`estimate`, 0.001) %+% 
+             " [" %+% scales::number(`conf.low`, 0.001) %+% " - " %+% scales::number(`conf.high`, 0.001) %+% "] " %+%
+             `p-stars`)
+  beta.labels$label[beta.labels$`Forma clinică` == lev] = "beta = " %+% beta.table$label[2]
+  
+}
+
+plt_IgG <- plt_IgG + #labs(subtitle = "RR = " %+% rr.table$label[2])
+  geom_text(data=beta.labels, aes(label=`label`), x=0, y=log10(180), size=3, hjust=0, vjust=0)
+plt_IgG
+ggsave("IgG.png", plt_IgG, device = "png", height=3, width=5, units = "in", dpi=600)
+
+
+cat("\n\n")
+cat(fig_caption("antibody trends", "Averaged and plotted against time since confirmation date, both IgM and IgG values showed an upwoards linear trend, more pronounced in severe compared to milder forms, and in IgG compared to IgM. Log y axis; repeated measurements are joined by thin lines; linear regression line with SE; beta coefficient (log titre change per day)."))
+cat("\n\n")
+
+
+```
+
+## IgM positivity rate by time and clinical form
+
+Both antibodies showed an upwards trend in positivity rate across time. In both cases, patients with a more severe form had relatively higher rate of positivity after 2-4 weeks as well as after the first few days since confirmation. IgM seem better correlated to severity than IgG. A smaller proportion of patients had detectable levels of IgM compared to IgM in milder cases, while IgG became positive after 1 month in almost all patients, regardless of severity. Similarly, RT-PCR positivity rate decreased faster among patients with milder forms.
+
+The highest number of test were performed during the the first 2 weeks since confirmation. Few patients had follow-up longer then what is shown in the charts. Their data was still included in the calculations, but their effect on the overall results are negligible. 
+
+```{r echo=F, fig.height=3, fig.width=5, message=F, warning=F, dpi=600, results="asis", include=T}
+
+
+DB2_IgM2 <- DB %>% select(c("IgM", "Days since confirmation", "Forma clinică")) %>% na.omit() %>% 
+  mutate(`IgM` = ifelse(is.na(`IgM`), NA, ifelse(`IgM`>0.8, "detectable", "negative") )) %>%
+  group_by(`Forma clinică`,`Days since confirmation`, `IgM`) %>%
+  summarise(`detectable` = n()) %>%
+  tidyr::spread("IgM", "detectable") %>%
+  na.replace(0) %>%
+  mutate(`tests` = `detectable` + `negative`, 
+         `proportion detectable` = `detectable` / `tests`,
+         `LCL` = binom.test(`detectable`, `tests`)$conf.int[1],
+         `UCL` = binom.test(`detectable`, `tests`)$conf.int[2])
+
+plt_IgM2 <- DB2_IgM2 %>% ggplot(aes(x=`Days since confirmation`, y=`proportion detectable` )) + 
+  facet_wrap(.~`Forma clinică`, labeller = labeller(`Forma clinică` = label_prefix(my_prefix = metadata.var_to_labels("Forma clinică", metadata), sep = ": ", wrap=25))) +
+  geom_line() +
+  geom_point(aes(size=`tests`)) +
+  scale_size_area(max_size = 4)+ guides(size=F) +
+  geom_linerange(aes(ymin=`LCL`, ymax=`UCL`), size=0.1) +
+  geom_smooth(aes(weight=`tests`), color="red", method = glm, method.args = list(family=binomial(link="probit")))+
+  geom_col(aes(y=`tests`/max(`tests`)/4), width = 0.75, alpha=0.5) +
+  scale_x_continuous("Durata de la data confirmării (zile)", limits = c(-0.5, 31), breaks = seq(0, 100, 7)) + 
+  no.minor_grid.x +
+  scale_y_continuous("% IgM detectabil (> 0.8)", labels = scales::percent_format(1),
+                     limits=c(0, 1.1), breaks =seq(0, 1, 0.25),
+                     sec.axis = sec_axis("Teste efectuate", trans=function(x){x*4*max(DB2_IgM2$`tests`)},
+                                         breaks = seq(0, 100, 25))) +
+  theme(axis.title.y.right = element_text(hjust=0, angle = 90))
+
+
+# rr.table
+rr.labels = data.frame(`Forma clinică` = levels(DB2_IgM2$`Forma clinică`)) %>%
+  set_colnames(c("Forma clinică"))
+for (lev in rr.labels$`Forma clinică`) {
+  
+  data = DB2_IgM2 %>% filter(`Forma clinică` == lev)
+  fit <- glm(data=data, formula=`proportion detectable`~`Days since confirmation`, weights = `tests`,
+      family=binomial(link="probit"))# %>%
+  
+  rr.table <- broom::tidy(fit) %>% cbind( broom::confint_tidy(fit) ) %>%
+    mutate(`RR` = exp(estimate), UCL = exp(conf.high), LCL = exp(conf.low),
+           `p-value` = scales::pvalue(p.value, add_p = T), `p-stars` = pstars(p.value)) %>%
+    mutate(label = limit_between(`RR`) %+% 
+             " [" %+% limit_between(`LCL`) %+% " - " %+% limit_between(`UCL`) %+% "] " %+%
+             `p-stars`)
+  rr.labels$label[rr.labels$`Forma clinică` == lev] = "RR = " %+% rr.table$label[2]
+  
+}
+
+plt_IgM2 <- plt_IgM2 + #labs(subtitle = "RR = " %+% rr.table$label[2])
+  geom_text(data=rr.labels, aes(label=`label`), x=0, y=1.05, size=3, hjust=0, vjust=0)
+plt_IgM2
+ggsave("detectabil_IgM2.png", plt_IgM2, device = "png", height=3, width=5, units = "in", dpi=600)
+```
+
+## IgG positivity rate by time and clinical form
+
+```{r echo=F, fig.height=3, fig.width=5, message=F, warning=F, dpi=600, results="asis", include=T}
+
+DB2_IgG2 <- DB %>% select(c("IgG", "Days since confirmation", "Forma clinică")) %>% na.omit() %>% 
+  mutate(`IgG` = ifelse(is.na(`IgG`), NA, ifelse(`IgG`>0.8, "detectable", "negative") )) %>%
+  group_by(`Forma clinică`,`Days since confirmation`, `IgG`) %>%
+  summarise(`detectable` = n()) %>%
+  tidyr::spread("IgG", "detectable") %>%
+  na.replace(0) %>%
+  mutate(`tests` = `detectable` + `negative`, 
+         `proportion detectable` = `detectable` / `tests`,
+         `LCL` = binom.test(`detectable`, `tests`)$conf.int[1],
+         `UCL` = binom.test(`detectable`, `tests`)$conf.int[2])
+
+plt_IgG2 <- DB2_IgG2 %>% ggplot(aes(x=`Days since confirmation`, y=`proportion detectable` )) + 
+  facet_wrap(.~`Forma clinică`, labeller = labeller(`Forma clinică` = label_prefix(my_prefix = metadata.var_to_labels("Forma clinică", metadata), sep = ": ", wrap=25))) +
+  geom_line() +
+  geom_point(aes(size=`tests`)) +
+  scale_size_area(max_size = 4)+ guides(size=F) +
+  geom_linerange(aes(ymin=`LCL`, ymax=`UCL`), size=0.1) +
+  geom_smooth(aes(weight=`tests`), color="red", method = glm, method.args = list(family=binomial(link="probit")))+
+  geom_col(aes(y=`tests`/max(`tests`)/4), width = 0.75, alpha=0.5) +
+  scale_x_continuous("Durata de la data confirmării (zile)", limits = c(-0.5, 31), breaks = seq(0, 100, 7)) + 
+  no.minor_grid.x +
+  scale_y_continuous("% IgG detectabil (> 0.8)", labels = scales::percent_format(1),
+                     limits=c(0, 1.1), breaks =seq(0, 1, 0.25),
+                     sec.axis = sec_axis("Teste efectuate", trans=function(x){x*4*max(DB2_IgG2$`tests`)},
+                                         breaks = seq(0, 100, 25))) +
+  theme(axis.title.y.right = element_text(hjust=0, angle = 90))
+
+
+# rr.table
+rr.labels = data.frame(`Forma clinică` = levels(DB2_IgG2$`Forma clinică`)) %>%
+  set_colnames(c("Forma clinică"))
+for (lev in rr.labels$`Forma clinică`) {
+  
+  data = DB2_IgG2 %>% filter(`Forma clinică` == lev)
+  fit <- glm(data=data, formula=`proportion detectable`~`Days since confirmation`, weights = `tests`,
+      family=binomial(link="probit"))# %>%
+  
+  rr.table <- broom::tidy(fit) %>% cbind( broom::confint_tidy(fit) ) %>%
+    mutate(`RR` = exp(estimate), UCL = exp(conf.high), LCL = exp(conf.low),
+           `p-value` = scales::pvalue(p.value, add_p = T), `p-stars` = pstars(p.value)) %>%
+    mutate(label = limit_between(`RR`) %+% 
+             " [" %+% limit_between(`LCL`) %+% " - " %+% limit_between(`UCL`) %+% "] " %+%
+             `p-stars`)
+  rr.labels$label[rr.labels$`Forma clinică` == lev] = "RR = " %+% rr.table$label[2]
+  
+}
+
+plt_IgG2 <- plt_IgG2 + #labs(subtitle = "RR = " %+% rr.table$label[2])
+  geom_text(data=rr.labels, aes(label=`label`), x=0, y=1.05, size=3, hjust=0, vjust=0)
+plt_IgG2
+ggsave("detectabil_IgG2.png", plt_IgG2, device = "png", height=3, width=5, units = "in", dpi=600)
+```
+
+## PCR positivity rate by time and clinical form
+
+```{r echo=F, fig.height=3, fig.width=5, message=F, warning=F, dpi=144, results="asis", include=T}
+
+DB2_PCR <- DB %>% select(c("RT - PCR", "Days since confirmation", "Forma clinică")) %>% na.omit() %>% #summary
+  group_by(`Forma clinică`, `Days since confirmation`, `RT - PCR`) %>%
+  summarise(`detectable` = n()) %>%
+  tidyr::spread("RT - PCR", "detectable") %>%
+  na.replace(0) %>%
+  mutate(`tests` = `detectable` + `negative`, 
+         `proportion detectable` = `detectable` / `tests`,
+         `LCL` = binom.test(`detectable`, `tests`)$conf.int[1],
+         `UCL` = binom.test(`detectable`, `tests`)$conf.int[2]) 
+
+plt_PCR2 <- DB2_PCR %>% ggplot(aes(x=`Days since confirmation`, y=`proportion detectable` )) +  
+  facet_wrap(.~`Forma clinică`, labeller = labeller(`Forma clinică` = label_prefix(my_prefix = metadata.var_to_labels("Forma clinică", metadata), sep = ": ", wrap=25))) +
+  geom_line() +
+  geom_point(aes(size=`tests`)) +
+  scale_size_area(max_size = 4)+ guides(size=F)+
+  geom_linerange(aes(ymin=`LCL`, ymax=`UCL`), size=0.1) +
+  geom_smooth(aes(weight=`tests`), color="red", method = glm, method.args = list(family=binomial(link="probit")))+
+  geom_col(aes(y=`tests`/max(`tests`)/4), alpha=0.5, width = 0.75) +
+  # geom_point(data = DB %>% mutate(`RT - PCR` = ifelse(`RT - PCR` == "detectable", 1, 0)), 
+  #            aes(x = `Days since confirmation`, y = `RT - PCR`), 
+  #            alpha=0.05)+
+  # geom_smooth(data = DB %>% mutate(`RT - PCR` = ifelse(`RT - PCR` == "detectable", 1, 0)),
+  #            aes(x = `Days since confirmation`, y = `RT - PCR`),
+  #            color="green", method = glm, method.args = list(family=binomial(link="probit")))+
+  scale_x_continuous(limits = c(-0.5, 31), breaks = seq(0, 100, 7)) + no.minor_grid.x +
+  scale_y_continuous("% detectable RT - PCR", labels = scales::percent_format(1),
+                     limits=c(0, 1.1), breaks =seq(0, 1, 0.25),
+                     sec.axis = sec_axis("Number of tests", trans=function(x){x*4*max(DB2_PCR$`tests`)},
+                                         breaks = seq(0, 100, 25))) +
+  theme(axis.title.y.right = element_text(hjust=0, angle = 90))
+
+# rr.table
+rr.labels = data.frame(`Forma clinică` = levels(DB2_PCR$`Forma clinică`)) %>%
+  set_colnames(c("Forma clinică"))
+for (lev in rr.labels$`Forma clinică`) {
+  
+  data = DB2_PCR %>% filter(`Forma clinică` == lev)
+  fit <- glm(data=data, formula=`proportion detectable`~`Days since confirmation`, weights = `tests`,
+      family=binomial(link="probit"))# %>%
+  
+  rr.table <- broom::tidy(fit) %>% cbind( broom::confint_tidy(fit) ) %>%
+    mutate(`RR` = exp(estimate), UCL = exp(conf.high), LCL = exp(conf.low),
+           `p-value` = scales::pvalue(p.value, add_p = T), `p-stars` = pstars(p.value)) %>%
+    mutate(label = limit_between(`RR`) %+% 
+             " [" %+% limit_between(`LCL`) %+% " - " %+% limit_between(`UCL`) %+% "] " %+%
+             `p-stars`)
+  rr.labels$label[rr.labels$`Forma clinică` == lev] = "RR = " %+% rr.table$label[2]
+  
+}
+
+plt_PCR2 <- plt_PCR2 + #labs(subtitle = "RR = " %+% rr.table$label[2])
+  geom_text(data=rr.labels, aes(label=`label`), x=0, y=1.05, size=3, hjust=0, vjust=0)
+plt_PCR2
+ggsave("detectabil_PCR2.png", plt_PCR2, device = "png", height=3, width=5, units = "in", dpi=600)
+
+
+cat("\n\n")
+cat(fig_caption("positivity rate", "The proportion of patients found with detectable IgM (>0.8), IgG (>0.8) and RT-PCR results (uncertain results removed), by time since confirmation (first month) and clinical severity (mild: asymptomatic to mild; severe: intermediate to critical). Also shown: weighted probit regression line, risk-ratio change per day, number of tests performed (dot area and bottom histogram with right y-axis) and binomial 95% confidence interval around average proportion."))
+cat("\n\n")
+
+
+```
+## Summary table by clinical form
+
+```{r echo=F, fig.height=4, fig.width=7, message=F, warning=F, dpi=144, results="asis", include=T}
+cat("\n\n")
+cat(tab_caption("t.grup.demo+antropo", "Sample description by clinical severity (mild: asymptomatic to mild; severe: intermediate to critical)."))
+cat("\n\n")
+
+dates = metadata$Var [ metadata$Type == "date"]
+x <- colnames(baza_de_date)[colnames(baza_de_date) %!in% c(dates, "Exclude", "FO")]
+
+baza_de_date %>% #select(x) %>% 
+  mutate(`Clinical form` = forcats::fct_collapse(`Clinical form`, 
+                                                  `mild` = c("asymptomatic", "mild"),
+                                                  `severe` = c("intermediate", "severe", "critical")),
+         `Clinical form` = factor(`Clinical form`, levels=c("severe", "mild"))) %>% 
+  mutate_at(c("Sex"), forcats::fct_rev) %>%
+  select(c(x)) %>%  # DescTools::Desc()
+  make_summary_table(g.rows = c("mean_sd", "med_range", "med_iqr"), #prefer = "non-parametric", #, "med_iqr" #, phi=T
+                     # med_range_string = "M (range)",
+                     dep="Clinical form",
+                     footnote = list(lang="en", values=c("mean_sd", "Welch", "OR")),
+                     header = list(lang="en", columns=c("Factor", "Levels", "Total", "Statistics")),
+                     metadata = metadata)
+
+
+```
+
+## Summary table by IgM reactivity
+
+```{r echo=F, fig.height=3, fig.width=5, message=F, warning=F, dpi=600, results="asis", include=T}
+cat("\n\n")
+cat(tab_caption("t.reactivity.IgM", "Sample description by IgM reactivity, defined as high if at least 1 measurement was above the 75% quartile af all IgM measurements in the database (2.607 for IgM)."))
+cat("\n\n")
+
+baza_de_date%>% 
+  select(-c(dates, "FO", "Exclude")) %>%
+  mutate(`AgeCategory` = cut(`Age (years)`, breaks = c(-Inf, 50, Inf ), labels = c("<50"," >50"))) %>%
+  mutate_at(c("Sex", "AgeCategory"), forcats::fct_rev) %>%
+  mutate(`Clinical form` = forcats::fct_collapse(`Clinical form`, 
+                                                   `mild` = c("asymptomatic", "mild"),
+                                                   `severe` = c("intermediate", "severe", "critical"))) %>%
+  mutate(`Clinical form` = forcats::fct_rev(`Clinical form`)) %>%
+  make_summary_table(dep="IgM >2.6", g.rows = c("mean_sd", "med_range"), #prefer = "non-parametric", #, "med_iqr" #, phi=T
+                     # med_range_string = "M (range)",
+                     footnote = list(lang="en", values=c("mean_sd", "Welch", "OR")),
+                     header = list(lang="en", columns=c("Factor", "Levels", "Total", "Statistics")),
+                     metadata = metadata)
+```
+
+## Summary table by IgG reactivity
+
+```{r echo=F, fig.height=4, fig.width=7, message=F, warning=F, dpi=144, results="asis", include=T}
+cat("\n\n")
+cat(tab_caption("t.reactivity.IgG", "Sample description by IgG reactivity, defined as high if at least 1 measurement was above the 75% quartile af all IgG measurements in the database (2.906 for IgG)."))
+cat("\n\n")
+
+baza_de_date%>% 
+  select(-c(dates, "FO", "Exclude")) %>%
+  mutate(`AgeCategory` = cut(`Age (years)`, breaks = c(-Inf, 50, Inf ), labels = c("<50"," >50"))) %>%
+  mutate_at(c("Sex", "AgeCategory"), forcats::fct_rev) %>%
+  mutate(`Clinical form` = forcats::fct_collapse(`Clinical form`, 
+                                                   `mild` = c("asymptomatic", "mild"),
+                                                   `severe` = c("intermediate", "severe", "critical"))) %>%
+  mutate(`Clinical form` = forcats::fct_rev(`Clinical form`)) %>%
+  make_summary_table(dep="IgG >2.9", g.rows = c("mean_sd", "med_range"), #prefer = "non-parametric", #, "med_iqr" #, phi=T
+                     # med_range_string = "M (range)",
+                     footnote = list(lang="en", values=c("mean_sd", "Welch", "OR")),
+                     header = list(lang="en", columns=c("Factor", "Levels", "Total", "Statistics")),
+                     metadata = metadata)
+
+
+# baza_de_date %>%
+#   mutate(AgeCategory = cut(`Age (years)`, breaks = c(-Inf, 60, Inf ), labels = c("<60"," >60"))) %>%
+#   
+#   my_bar("IgM >2.6", "AgeCategory")
+# 
+# baza_de_date %>%
+#   mutate(AgeCategory = cut(`Age (years)`, breaks = c(-Inf, 60, Inf ), labels = c("<60"," >60"))) %>%
+#   my_bar("IgG >2.9", "AgeCategory")
+```
+
+# Results: all
+
+IgM and IgG values at all time intervals since confirmation date were consistently significantly correlated, irrespective of time since confirmation, date of confirmation or clinical form.
+
+```{r echo=F, fig.height=4, fig.width=7, message=FALSE, warning=FALSE, dpi=144, include=F, results="asis"}
+
+DB %>%
+  filter(`Days since confirmation`<31) %>%
+  ggpubr::ggscatter("IgM", "IgG", ggtheme = my_theme(), color = "Days since confirmation", alpha=0.5, size=1.5,
+                    add = "reg.line", conf.int = T, cor.method = "spearman", cor.coef = T) + 
+  geom_abline(color="white") +
+  scale_x_log10("Log IgM", breaks = 2^c(-2:10), labels = c("1/"%+%2^c(2:1), 2^c(0:10)), limits=c(0.25, 128)) +
+  no.minor_grid.x +
+  scale_y_log10("Log IgG", breaks = 2^c(-2:10), labels = c("1/"%+%2^c(2:1), 2^c(0:10)), limits=c(0.5, 256)) +
+  no.minor_grid.y +
+  scale_colour_gradient2_tableau("Days since confirmation", palette = "Temperature Diverging", 
+                                 limits = c(0, 31), breaks = c(0, 7, 14, 21, 28)) +
+  # scale_color_viridis_c(direction = -1)+
+  # scale_color_distiller(palette = "Spectral")+
+  guides(color=guide_colorsteps(show.limits = F, even.steps = F, ticks = 7, 
+                                draw.ulim=T, draw.llim=T, direction="horizontal", title.position="top",
+                                barwidth=unit(40, "mm"))) 
+  
+DB %>%
+  #filter(!is.na(`Clinical form`)) %>%
+  mutate(`Confirmation date` = as.Date(`Confirmation date`), `Severity` = `Clinical form`) %>%
+  ggpubr::ggscatter("IgM", "IgG", ggtheme = my_theme(), color = "Confirmation date", alpha=0.5, size=1.5,
+                    add = "reg.line", conf.int = T, cor.method = "spearman", cor.coef = T) + 
+  geom_abline(color="white") +
+  scale_x_log10("Log IgM", breaks = 2^c(-2:10), labels = c("1/"%+%2^c(2:1), 2^c(0:10)), limits=c(0.25, 128)) +
+  no.minor_grid.x +
+  scale_y_log10("Log IgG", breaks = 2^c(-2:10), labels = c("1/"%+%2^c(2:1), 2^c(0:10)), limits=c(0.5, 256)) +
+  no.minor_grid.y +
+  scale_colour_gradient2_tableau("Confirmation date", palette = "Temperature Diverging", trans="date",
+                                 limits =as.Date.character(c("2020-03-01", "2020-09-01"))) +
+  guides(color=guide_colorsteps(show.limits = F, even.steps = F, ticks = 7, 
+                                draw.ulim=T, draw.llim=T, direction="horizontal", title.position="top",
+                                barwidth=unit(40, "mm"))) 
+  
+
+cat("\n\n")
+cat(fig_caption("IgG vs IgM", "Correlation (Spearman) between IgG and IgM values (both log2 scale), during the first month since confirmation. Values are color-coded by time since confirmation (first 30 days) and by date of confirmation."))
+cat("\n\n")
+
+# DB %>%
+#   mutate (`IgG / IgM ratio` = IgG/IgM) %>%
+#   ggplot(aes(x=`Days since confirmation`, y = `IgG / IgM ratio`)) +
+#   # geom_point(alpha=0.5) +
+#   geom_bin2d(color="grey")+ scale_fill_distiller(palette = "Reds", direction = 1)+
+#   # scale_y_log10("Log IgG", breaks = 2^c(-2:10), labels = c("1/"%+%2^c(2:1), 2^c(0:10)), limits=c(0.5, 256)) +
+#   scale_y_log10() + scale_x_continuous(limits = c(-0.5, 31), breaks = seq(0, 100, 7)) + no.minor_grid.x +
+#   geom_smooth(method = lm)
+
+```
+
+```{r echo=F, fig.height=4, fig.width=7, message=F, warning=F, dpi=144, results="asis", include=F}
+# DB <- bind_cols( 
+#   baza_de_date %>% select(c(test_days, "FO", "Confirmation date", "Clinical form")) %>% 
+#     tidyr::gather("dontcare", "Days since confirmation", test_days) %>% 
+#     select(c("Days since confirmation", "FO", "Confirmation date", "Clinical form")) %>% 
+#     mutate(`Clinical form` = forcats::fct_collapse(`Clinical form`, 
+#                                                    `mild` = c("asymptomatic", "mild"),
+#                                                    `severe` = c("intermediate", "severe", "critical"))),
+#   baza_de_date %>% select(c(PCRs)) %>% tidyr::gather("dontcare", "RT - PCR", PCRs) %>% 
+#     select(c("RT - PCR")) %>% mutate(`RT - PCR` = factor(`RT - PCR`, levels = c("detectable", "negative"))),
+#   baza_de_date %>% select(c(IgMs)) %>% tidyr::gather("dontcare", "IgM", IgMs) %>% select(c("IgM")),
+#   baza_de_date %>% select(c(IgGs)) %>% tidyr::gather("dontcare", "IgG", IgGs) %>% select(c("IgG"))
+# ) #%>% na.omit() # %>% mutate(`Log IgM` = log2(`IgM`), `Log IgG` = log2(`IgG`))
+
+
+DB %>% #select(c("IgM", "Days since confirmation", "FO")) %>% na.omit() %>%
+  # filter(!is.na(`Clinical form`)) %>%
+  ggplot(aes(x=`Days since confirmation`)) + 
+  # facet_wrap(.~`Clinical form`, labeller = labeller(`Clinical form` = label_prefix(my_prefix = metadata.var_to_labels("Clinical form", metadata), sep = ": ", wrap=25))) +
+  geom_point(aes(y=`IgM`, shape=`IgM`>0.8), size=1, alpha=0.5) +
+  geom_line(aes(y=`IgM`, group=`FO`, color=as.Date(`Confirmation date`)), size=1/3, alpha=0.5) +
+  #geom_smooth(data=mean.log.IgM, aes(y=2^`mean.log.IgM`), method = lm)+
+  # geom_line(data=mean.log.IgM, inherit.aes = F, aes(x = `Days since confirmation`, y=2^`mean.log.IgM`)) +
+  # stat_summary(aes(y=`IgM`, x=`Days since confirmation`), geom = "pointrange")+
+  stat_summary(aes(y=`IgM`, x=`Days since confirmation`), geom = "line")+
+  geom_smooth(aes(y=`IgM`), method = lm, color="red")+
+  #stat_count(aes(y = ..count..), geom="line", color="blue") +
+  #scale_y_log10()+ annotation_logticks(base = 10, sides = "l", scaled = T) +
+  scale_y_log10("Log IgM", breaks = 2^c(-2:10), labels = c("1/"%+%2^c(2:1), 2^c(0:10)), limits=c(0.25, 256)) +
+  no.minor_grid.y +
+  scale_shape_circlefill() +
+  scale_colour_gradient2_tableau("Confirmation date", palette = "Temperature Diverging", trans="date",
+                                 limits =as.Date.character(c("2020-03-01", "2020-09-01")))+
+  guides(shape=F, 
+         color=guide_colorsteps(show.limits = F, even.steps = F, ticks = 7, 
+                                draw.ulim=T, draw.llim=T, direction="horizontal", title.position="top",
+                                barwidth=unit(40, "mm"))) +  
+  legend.top_left+
+  scale_x_continuous(limits = c(-0.5, 31), breaks = seq(0, 100, 7)) + no.minor_grid.x 
+
+DB %>% #select(c("IgG", "Days since confirmation", "FO")) %>% na.omit() %>%
+  # filter(!is.na(`Clinical form`)) %>%
+  ggplot(aes(x=`Days since confirmation`)) + 
+  # facet_wrap(.~`Clinical form`, labeller = labeller(`Clinical form` = label_prefix(my_prefix = metadata.var_to_labels("Clinical form", metadata), sep = ": ", wrap=25))) +
+  geom_point(aes(y=`IgG`, shape=`IgG`>0.8), size=1, alpha=0.5) +
+  geom_line(aes(y=`IgG`, group=`FO`, color=as.Date(`Confirmation date`)), size=1/3, alpha=0.5) +
+  #geom_smooth(data=mean.log.IgG, aes(y=2^`mean.log.IgG`), method = lm)+
+  # geom_line(data=mean.log.IgG, inherit.aes = F, aes(x = `Days since confirmation`, y=2^`mean.log.IgG`)) +
+  # stat_summary(aes(y=`IgG`, x=`Days since confirmation`), geom = "pointrange")+
+  stat_summary(aes(y=`IgG`, x=`Days since confirmation`), geom = "line")+
+  geom_smooth(aes(y=`IgG`), method = lm, color="red")+
+  #scale_y_log10()+ annotation_logticks(base = 10, sides = "l", scaled = T) +
+  scale_y_log10("Log IgG", breaks = 2^c(-2:10), labels = c("1/"%+%2^c(2:1), 2^c(0:10)), limits=c(0.25, 256)) +
+  no.minor_grid.y +
+  scale_shape_circlefill() +
+  scale_colour_gradient2_tableau("Confirmation date", palette = "Temperature Diverging", trans="date",
+                                 limits =as.Date.character(c("2020-03-01", "2020-09-01")))+
+  # scale_color_viridis_c(trans="date")+
+  guides(shape=F, 
+         color=guide_colorsteps(show.limits = F, even.steps = F, ticks = 7, 
+                                draw.ulim=T, draw.llim=T, direction="horizontal", title.position="top",
+                                barwidth=unit(40, "mm"))) +   
+  legend.top_left+
+  scale_x_continuous(limits = c(-0.5, 31), breaks = seq(0, 100, 7)) + no.minor_grid.x 
+  
+
+
+cat("\n\n")
+cat(fig_caption("IgG and IgM", "Evolution of IgM and IgG values (log 2 scale) during the first month since confirmation, by clinical form (mild: asymptomatic to mild; severe: intermediate to critical). Emphasized features show daily average (black) and their linear trend (red). Subtle features show: each measurement (dots for values above 0.8, circles for values below), connected for patients with multiple measurements, colored by confirmation date."))
+cat("\n\n")
+
+# DB
+# quantile(na.omit(DB$IgM))
+# quantile(na.omit(DB$IgG))
+# 
+# l1 <- lm(log2(DB$IgG)~DB$`Days since confirmation`)$coefficients[2]
+# l2 <- lm(log2(DB$IgM)~DB$`Days since confirmation`)$coefficients[2]
+# 
+# l1
+# l2
+
+```
+
+## IgM by time
+
+```{r echo=F, fig.height=3, fig.width=5, message=F, warning=F, dpi=600, results="asis", include=T}
+
+DB2_IgM <- DB %>% select(c("IgM", "Days since confirmation",)) %>% na.omit() %>% 
+  mutate(`IgM` = ifelse(is.na(`IgM`), NA, ifelse(`IgM`>0.8, "detectable", "negative") )) %>%
+  group_by(`Days since confirmation`, `IgM`) %>%
+  summarise(`detectable` = n()) %>%
+  tidyr::spread("IgM", "detectable") %>%
+  na.replace(0) %>%
+  mutate(`tests` = `detectable` + `negative`, 
+         `proportion detectable` = `detectable` / `tests`,
+         `LCL` = binom.test(`detectable`, `tests`)$conf.int[1],
+         `UCL` = binom.test(`detectable`, `tests`)$conf.int[2])
+
+fit <- glm(data=DB2_IgM, formula=`proportion detectable`~`Days since confirmation`, weights = `tests`,
+    family=binomial(link="probit"))# %>%
+
+rr.table <- broom::tidy(fit) %>% cbind( broom::confint_tidy(fit) ) %>%
+  mutate(`RR` = exp(estimate), UCL = exp(conf.high), LCL = exp(conf.low),
+         `p-value` = scales::pvalue(p.value, add_p = T), `p-stars` = pstars(p.value)) %>%
+  mutate(label = limit_between(`RR`) %+% 
+           " [" %+% limit_between(`LCL`) %+% " - " %+% limit_between(`UCL`) %+% "] " %+%
+           `p-stars`)
+
+plt_IgM <- DB2_IgM %>% ggplot(aes(x=`Days since confirmation`, y=`proportion detectable` )) + 
+  # facet_wrap(.~`Clinical form`, labeller = labeller(`Clinical form` = label_prefix(my_prefix = metadata.var_to_labels("Clinical form", metadata), sep = ": ", wrap=25))) +
+  geom_line() +
+  geom_point(aes(size=`tests`)) +
+  scale_size_area(max_size = 4)+ guides(size=F) +
+  geom_linerange(aes(ymin=`LCL`, ymax=`UCL`), size=0.1) +
+  geom_smooth(aes(weight=`tests`), color="red", method = glm, method.args = list(family=binomial(link="probit")))+
+  geom_col(aes(y=`tests`/max(`tests`)/4), width = 0.75, alpha=0.5) +
+  scale_x_continuous("Durata de la data confirmării (zile)", limits = c(-0.5, 31), breaks = seq(0, 100, 7)) + no.minor_grid.x +
+  scale_y_continuous("% IgM detectabil (> 0.8)", labels = scales::percent_format(1),
+                     sec.axis = sec_axis("Teste efectuate", trans=function(x){x*4*max(DB2_IgM$`tests`)},
+                                         breaks = seq(0, 100, 25))) +
+  theme(axis.title.y.right = element_text(hjust=0, angle = 90))
+
+
+# rr.table
+plt_IgM <- plt_IgM + labs(subtitle = "RR = " %+% rr.table$label[2])
+plt_IgM
+ggsave("detectabil_IgM.png", plt_IgM, device = "png", height=3, width=5, units = "in", dpi=600)
+```
+
+## IgG by time 
+
+```{r echo=F, fig.height=3, fig.width=5, message=F, warning=F, dpi=600, results="asis", include=T}
+DB2_IgG <- DB %>% select(c("IgG", "Days since confirmation")) %>% na.omit() %>%
+  mutate(`IgG` = ifelse(`IgG`>0.8, "detectable", "negative")) %>%
+  group_by(`Days since confirmation`, `IgG`) %>%
+  summarise(`detectable` = n()) %>%
+  tidyr::spread("IgG", "detectable") %>%
+  na.replace(0) %>%
+  mutate(`tests` = `detectable` + `negative`, 
+         `proportion detectable` = `detectable` / `tests`,
+         `LCL` = binom.test(`detectable`, `tests`)$conf.int[1],
+         `UCL` = binom.test(`detectable`, `tests`)$conf.int[2]) 
+
+fit <- glm(data=DB2_IgG, formula=`proportion detectable`~`Days since confirmation`, weights = `tests`,
+    family=binomial(link="probit"))# %>%
+
+rr.table <- broom::tidy(fit) %>% cbind( broom::confint_tidy(fit) ) %>%
+  mutate(`RR` = exp(estimate), UCL = exp(conf.high), LCL = exp(conf.low),
+         `p-value` = scales::pvalue(p.value, add_p = T), `p-stars` = pstars(p.value)) %>%
+  mutate(label = limit_between(`RR`) %+% 
+           " [" %+% limit_between(`LCL`) %+% " - " %+% limit_between(`UCL`) %+% "] " %+%
+           `p-stars`)
+
+plt_IgG <- DB2_IgG %>% ggplot(aes(x=`Days since confirmation`, y=`proportion detectable` )) + 
+  # facet_wrap(.~`Clinical form`, labeller = labeller(`Clinical form` = label_prefix(my_prefix = metadata.var_to_labels("Clinical form", metadata), sep = ": ", wrap=25))) +
+  geom_line() +
+  geom_point(aes(size=`tests`)) +
+  scale_size_area(max_size = 4)+ guides(size=F)+
+  geom_linerange(aes(ymin=`LCL`, ymax=`UCL`), size=0.1) +
+  geom_smooth(aes(weight=`tests`), color="red", 
+              method = glm, method.args = list(family=binomial(link="probit")))+
+  geom_col(aes(y=`tests`/max(`tests`)/4), width = 0.75, alpha=0.5) +
+  scale_x_continuous("Durata de la data confirmării (zile)", limits = c(-0.5, 31), breaks = seq(0, 100, 7)) + no.minor_grid.x +
+  scale_y_continuous("% IgG detectabil (> 0.8)", labels = scales::percent_format(1),
+                     sec.axis = sec_axis("Teste efectuate", trans=function(x){x*4*max(DB2_IgG$`tests`)},
+                                         breaks = seq(0, 100, 25))) +
+  theme(axis.title.y.right = element_text(hjust=0, angle = 90))
+
+# rr.table
+plt_IgG <- plt_IgG + labs(subtitle = "RR = " %+% rr.table$label[2])
+plt_IgG
+ggsave("detectabil_IgG.png", plt_IgG, device = "png", height=3, width=5, units = "in", dpi=600)
+```
+
+```{r echo=F, fig.height=3, fig.width=5, message=F, warning=F, dpi=600, results="asis", include=T}
+DB2_PCR <- DB %>% select(c("RT - PCR", "Days since confirmation")) %>% na.omit() %>% #summary
+  group_by(`Days since confirmation`, `RT - PCR`) %>%
+  summarise(`detectable` = n()) %>%
+  tidyr::spread("RT - PCR", "detectable") %>%
+  na.replace(0) %>%
+  mutate(`tests` = `detectable` + `negative`, 
+         `proportion detectable` = `detectable` / `tests`,
+         `LCL` = binom.test(`detectable`, `tests`)$conf.int[1],
+         `UCL` = binom.test(`detectable`, `tests`)$conf.int[2]) 
+
+fit <- glm(data=DB2_PCR, formula=`proportion detectable`~`Days since confirmation`, weights = `tests`,
+    family=binomial(link="probit"))# %>%
+
+rr.table <- broom::tidy(fit) %>% cbind( broom::confint_tidy(fit) ) %>%
+  mutate(`RR` = exp(estimate), UCL = exp(conf.high), LCL = exp(conf.low),
+         `p-value` = scales::pvalue(p.value, add_p = T), `p-stars` = pstars(p.value)) %>%
+  mutate(label = limit_between(`RR`) %+% 
+           " [" %+% limit_between(`LCL`) %+% " - " %+% limit_between(`UCL`) %+% "] " %+%
+           `p-stars`)
+
+plt_PCR <- DB2_PCR %>% ggplot(aes(x=`Days since confirmation`, y=`proportion detectable` )) +  
+  # facet_wrap(.~`Clinical form`, labeller = labeller(`Clinical form` = label_prefix(my_prefix = metadata.var_to_labels("Clinical form", metadata), sep = ": ", wrap=25))) +
+  geom_line() +
+  geom_point(aes(size=`tests`)) +
+  scale_size_area(max_size = 4)+ guides(size=F)+
+  geom_linerange(aes(ymin=`LCL`, ymax=`UCL`), size=0.1) +
+  geom_smooth(aes(weight=`tests`), color="red", method = glm, method.args = list(family=binomial(link="probit")))+
+  geom_col(aes(y=`tests`/max(`tests`)/4), alpha=0.5, width = 0.75) +
+  # geom_point(data = DB %>% mutate(`RT - PCR` = ifelse(`RT - PCR` == "detectable", 1, 0)), 
+  #            aes(x = `Days since confirmation`, y = `RT - PCR`), 
+  #            alpha=0.05)+
+  # geom_smooth(data = DB %>% mutate(`RT - PCR` = ifelse(`RT - PCR` == "detectable", 1, 0)),
+  #            aes(x = `Days since confirmation`, y = `RT - PCR`),
+  #            color="green", method = glm, method.args = list(family=binomial(link="probit")))+
+  scale_x_continuous("Durata de la data confirmării (zile)", limits = c(-0.5, 31), breaks = seq(0, 100, 7)) + no.minor_grid.x +
+  scale_y_continuous("% RT - PCR detectabil", labels = scales::percent_format(1),
+                     sec.axis = sec_axis("Teste efectuate", trans=function(x){x*4*max(DB2_PCR$`tests`)},
+                                         breaks = seq(0, 100, 25))) +
+  theme(axis.title.y.right = element_text(hjust=0, angle = 90))
+
+# rr.table
+plt_PCR <- plt_PCR + labs(subtitle = "RR = " %+% rr.table$label[2])
+plt_PCR
+ggsave("detectabil_PCR.png", plt_PCR, device = "png", height=3, width=5, units = "in", dpi=600)
+
+
+
+cat("\n\n")
+cat(fig_caption("positivity rate2", "The proportion of patients found with detectable IgM (>0.8), IgG (>0.8) and RT-PCR results (uncertain results removed), by time since confirmation (first month) and clinical severity (mild: asymptomatic to mild; severe: intermediate to critical). Also shown: weighted probit regression line, number of tests performed (dot area and bottom histogram with right y-axis) and binomial 95% confidence interval around average proportion."))
+cat("\n\n")
+```
+
+
+# KM plots
+
+```{r my_surv_plot, echo=F, fig.height=3, fig.width=5, message=F, warning=F, dpi=600, results="asis", include=T}
+require("survival")
+
+my_surv_plot <- function(DB2, Time, by = NA, Status = NA, Status_event="dead",
+                         # sf_times = c(7, 14, 21, 28),
+                         hr_config_ord = "vs first", # "vs last"
+                         hr_config_bin = "vs second", 
+                         show_logrank = T,
+                         surv.connect = T, conf.int = T, conf.int.alpha = 0.1,
+                         censor = T, censor.size = 2.5, censor.shape = "|", 
+                         lwd=1, median.lwd=0.5, median.linetype = "dashed",
+                         metadata = NULL) {
+  # by="Clinical form"
+  
+  # make a censor variable named Status, either all not censored, or from a named variable
+  if (is.na(Status)) {
+    DB2$Status = T # all ok
+  } else {
+    DB2$Status = DB2[[Status]] == Status_event # TRUE if ok, false if censored
+  } 
+  
+  db <- DB2 %>% 
+    select(c(Time, Status, by)) %>%
+    mutate(nothing = "") %>%
+    set_colnames(c("Time", "Status", make.names(by), "nothing")) %>% 
+    na.omit() %>% droplevels()
+  #summary(db)
+  
+  ## fit: regular log-rank test
+  fit <- with(db, survfit(formula=as.formula("Surv(time = `Time`, event = `Status`) ~ " %+% make.names(by)) ))
+  test <-with(db, survival::survdiff(as.formula("Surv(time = `Time`, event = `Status`) ~ " %+% make.names(by))))
+  LR.p <- pchisq(test$chisq, length(test$n)-1, lower.tail = F)
+  
+  # sf <- summary(fit, times=sf_times)
+  #print(sf)
+  #sf$table %>% as.data.frame()
+  # sf <- summary(fit)
+  
+  surv_median <- as.vector(summary(fit)$table[, "median"])
+  df_fit <- data.frame(
+    strata2 = names(fit$strata) %>% str_remove_all(make.names(by) %+% "="),
+    x1 = surv_median, x2 = surv_median, 
+    y1 = rep(0, length(surv_median)), 
+    y2 = rep(0.5, length(surv_median)))
+  
+  
+  
+  ## fit2: coxh regression
+  levs <- levels(DB2[[by]])
+  if(length(levs) > 2) {
+    if (hr_config_ord == "vs first") { # compare all levels to the first (default)
+      db2 <- db
+    } else if (hr_config_ord == "vs last") {
+      db2 <- db %>% mutate_at(c( make.names(by)), forcats::fct_rev)
+    } 
+  } else { #if(length(levs) == 2) {
+    if (hr_config_bin == "vs first") { # no vs yes
+      db2 <- db
+    } else { # if (hr_config_ord == "vs second") { # yes vs no (default)
+      db2 <- db %>% mutate_at(c(make.names(by)), forcats::fct_rev)
+    }
+  }
+  fit2 <- with(db2, coxph(formula=as.formula("Surv(time = `Time`, event = `Status`) ~ " %+% make.names(by)) ))
+  # text_HR = "HR = " %+% scales::number(exp(fit2$coefficients), 0.001) 
+  
+  
+  ## KM plot
+  plt <- autoplot(fit, surv.connect = surv.connect, 
+                  size=lwd, # Does not work!!!
+                  conf.int = conf.int, conf.int.alpha = conf.int.alpha,
+                  censor = censor, censor.size = censor.size, censor.shape = censor.shape) +
+    scale_color_discrete(metadata.var_to_labels(by, metadata))+
+    scale_fill_discrete(metadata.var_to_labels(by, metadata))+
+    # scale_color_viridis_d(by) + scale_fill_viridis_d(by)+
+    
+    # annotate('text', label=text_HR %+% "\n" %+% text_LR, x = 33.5, y=0.7, size=3, hjust=0) +
+    geom_hline(yintercept=0.5, size=0.5, color="grey") +
+    geom_vline(aes(xintercept=x1, color=strata2), data=df_fit, linetype = median.linetype, size = median.lwd) 
+  
+  if (show_logrank == T) {
+    plt <- plt + labs(subtitle = "Log-rank test: " %+% scales::pvalue(LR.p, add_p = T) )
+    # plt <- plt + labs(y = "Log-rank test: ")
+  }
+  
+  attr(plt, "fit") = fit
+  attr(plt, "test") = test
+  attr(plt, "p-value") = LR.p
+  attr(plt, "fit2") = fit2 # coxh
+  
+  plt  
+  #return (plt)
+  
+  
+  # survminer::pairwise_survdiff(as.formula("Surv(time = `Survival`, event = `Dead`) ~ " %+% make.names(by)), data=db) %>% print()
+  
+  # db2 <- db %>% filter(Treatment != "Transplant") %>% droplevels()
+  # survminer::pairwise_survdiff(as.formula("Surv(time = `Survival`, event = `Dead`) ~ " %+% by), data=db2) %>% print()
+  
+  
+
+}
+
+last_available <- function(x) {
+  x <- na.omit(x)
+  if (length(x) == 0) return (NA)
+  else return (x[length(x)])
+}
+
+first_match_or_last_known <- function(x, pattern = "") {
+  x <- na.omit(x)
+  y <- grep(x=x, pattern = pattern, value = T )
+  # x = x[x == T]
+  if (length(y) == 0) return (x[length(x)])
+  else return (y[1])
+}
+```
+
+### PCR
+
+```{r last_status, echo=F, fig.height=3, fig.width=5, message=F, warning=F, dpi=600, results="asis", include=T}
+
+last_status_PCR <- 
+  DB %>% select(c("FO", "Days since confirmation", "RT - PCR")) %>%
+    na.omit() %>%
+    arrange(`FO`, `Days since confirmation`) %>%
+    mutate(key = `RT - PCR` %+% " " %+% `Days since confirmation`) %>%
+    group_by(`FO`) %>%
+    summarise(`key` = first_match_or_last_known(`key`, pattern = "nega")) %>%
+    tidyr::separate(col="key", into=c("Stauts at test #5", "Days since confirmation"), convert=T) %>%
+    mutate(`Stauts at test #5` = factor(`Stauts at test #5`, levels=c("detectable", "negative")))
+
+DB2_PCR <- baza_de_date %>%
+  select(c("FO", "Clinical form")) %>%
+  mutate(`Forma clinică` = forcats::fct_collapse(`Clinical form`, 
+                                                 `asimptomatică - ușoară` = c("asymptomatic", "mild"),
+                                                 `medie - severă` = c("intermediate", "severe", "critical")) %>%
+           factor(levels=c("asimptomatică - ușoară", "medie - severă")) ) %>%
+  mutate(`Severitate` = forcats::fct_collapse(`Clinical form`, 
+                                              `asimptomatică` = c("asymptomatic"),
+                                              `ușoară` = c("mild"),
+                                              `medie` = c("intermediate"),
+                                              `severă` = c("severe", "critical")) %>%
+           factor(levels=c("asimptomatică", "ușoară", "medie", "severă"))) %>%
+  merge(last_status_PCR, by="FO") 
+
+```
+
+```{r echo=F, fig.height=3, fig.width=5, message=F, warning=F, dpi=600, results="asis", include=T}
+plt1_PCR <- DB2_PCR %>%
+  my_surv_plot(by="Severitate", Time = "Days since confirmation", 
+               Status = "Stauts at test #5", Status_event = "negative",
+               conf.int.alpha = 0.025, lwd = 1, median.lwd = 0.33,
+               metadata = metadata)
+
+
+# summary(attr(plt1, "fit2"))
+hr.table_PCR <- attr(plt1_PCR, "fit2") %>% broom::tidy() %>% cbind( attr(plt1_PCR, "fit2") %>% broom::confint_tidy()) %>%
+  mutate(`HR` = 1/exp(estimate), LCL = 1/exp(conf.high), UCL = 1/exp(conf.low),
+         `p-value` = scales::pvalue(p.value, add_p = T), `p-stars` = pstars(p.value),
+         factor = str_remove_all(term, "Severitate") %>% factor(levels = levels(DB2_PCR$`Severitate`))) %>%
+  mutate(label = limit_between(`HR`) %+% 
+           " [" %+% limit_between(`LCL`) %+% " - " %+% limit_between(`UCL`) %+% "] " %+%
+           `p-stars`)
+
+plt1_PCR <- plt1_PCR + 
+  scale_color_brewer(palette = "Spectral", aesthetics = c("color", "fill"), direction = -1,
+  # scale_color_tableau(palette = "Classic Blue-Red 12",  direction = 1,
+                      name = "Severitate (1/HR, 95% CI, p)", #aesthetics = c("color", "fill"), 
+                      labels = c("asimptomatică vs.", "ușoară: ", "medie: ", "severă: ") %+% c("", hr.table_PCR$label)) +
+  scale_x_continuous("Durata până la negativarea RT-PCR (zile)",
+                     expand = expand_scale(mult=0.01),
+                    limits=c(0, 49), breaks=seq(0, 49, 7))+
+  scale_y_continuous("Proporția de cazuri (%)", expand = expand_scale(mult=0.01),
+                     breaks = seq(0, 1, 0.1), labels = scales::percent_format(1) ) +
+  theme(legend.key.width = unit(10, "mm"))
+  
+
+
+plt1_PCR
+ggsave("KM1_PCR.png", plt1_PCR, device = "png", height=3, width=5, units = "in", dpi=600)
+
+
+cat("\n\n")
+cat(fig_caption("KM PCR 1", "Reverse cummulative distribution (Kaplan Meier) plot of RT-PCR negativation rate by time since confirmation and severity. Dates were calculated to the first negative PCR result. Also shown: invese hazard-ratio comparing all severities to asymptomatic, with 95% CI and statistical signifficance; overall log-rank test."))
+cat("\n\n")
+
+
+```
+
+
+
+
+```{r echo=F, fig.height=3, fig.width=5, message=F, warning=F, dpi=600, results="asis", include=T}
+plt2_PCR <- DB2_PCR %>%
+  my_surv_plot(by="Forma clinică", Time = "Days since confirmation", 
+               Status = "Stauts at test #5", Status_event = "negative",
+               hr_config_bin = "vs first", show_logrank = F,
+               conf.int.alpha = 0.1, lwd = 1, median.lwd = 0.33,
+               metadata = metadata)
+
+
+# plt2_PCR
+# summary(attr(plt2_PCR, "fit2"))
+hr.table_PCR <- attr(plt2_PCR, "fit2") %>% broom::tidy() %>% cbind( attr(plt2_PCR, "fit2") %>% broom::confint_tidy()) %>%
+  mutate(`HR` = 1/exp(estimate), LCL = 1/exp(conf.high), UCL = 1/exp(conf.low),
+         `p-value` = scales::pvalue(p.value, add_p = T), `p-stars` = pstars(p.value),
+         factor = str_remove_all(term, "Forma clinică") %>% factor(levels = levels(DB2_PCR$`Forma clinică`))) %>%
+  mutate(label = "HR = " %+% limit_between(`HR`) %+% 
+           " [" %+% limit_between(`LCL`) %+% " - " %+% limit_between(`UCL`) %+% "]\nLog-rank: " %+%
+           `p-value`)
+
+plt2_PCR <- plt2_PCR + scale_color_brewer("Severitate", palette = "Set2", direction = 1,
+                                  aesthetics = c("color", "fill"),
+                                  labels = c("asimptomatică - ușoară vs.", "medie - severă:")) +
+  scale_x_continuous("Durata până la negativarea RT-PCR (zile)",
+                     expand = expand_scale(mult=0.01),
+                    limits=c(0, 49), breaks=seq(0, 49, 7))+
+  scale_y_continuous("Proporția de cazuri (%)", expand = expand_scale(mult=0.01),
+                     breaks = seq(0, 1, 0.1), labels = scales::percent_format(1) ) +
+  # guides(color = guide_legend(label.vjust = 0, keyheight = unit(5, "mm"), ))+
+  theme(legend.key.width = unit(10, "mm")) +
+  annotate("text", x=26, y=0.77, hjust=0, vjust=1, label = hr.table_PCR$label[1], size=3, fontface = 'italic')
+  
+
+plt2_PCR
+ggsave("KM2_PCR.png", plt2_PCR, device = "png", height=3, width=5, units = "in", dpi=600)
+
+
+cat("\n\n")
+cat(fig_caption("KM PCR 2", "Reverse cummulative distribution (Kaplan Meier) plot of RT-PCR negativation rate by time since confirmation and severity. Dates were calculated to the first negative PCR result. Also shown: invese hazard-ratio comparing more severe forms to asymptomatic - mild, with 95% CI and log-rank test."))
+cat("\n\n")
+
+
+
+
+attr(plt2_PCR, "fit") %>% summary(times= c(7, 14, 21, 28))
+#attr(plt2_PCR, "fit")
+summary(attr(plt2_PCR, "fit"))$table
+```
+
+### IgM
+
+```{r echo=F, fig.height=3, fig.width=5, message=F, warning=F, dpi=600, results="asis", include=T}
+
+
+last_status_IgM <- 
+  DB %>% select(c("FO", "Days since confirmation", "IgM")) %>% na.omit() %>%
+    mutate(`IgM positive` = ifelse(`IgM`>0.8, "detectable", "negative")) %>%
+    arrange(`FO`, `Days since confirmation`) %>%
+    mutate(key = `IgM positive` %+% " " %+% `Days since confirmation`) %>%
+    group_by(`FO`) %>%
+    summarise(`key` = first_match_or_last_known(`key`, "detectable")) %>% # na.omit() %>%
+    tidyr::separate(col="key", into=c("Stauts at test #5", "Days since confirmation"), convert=T) %>%
+    mutate(`Stauts at test #5` = factor(`Stauts at test #5`, levels=c("detectable", "negative")))
+
+DB2_IgM <- baza_de_date %>%
+  select(c("FO", "Clinical form")) %>%
+  mutate(`Forma clinică` = forcats::fct_collapse(`Clinical form`, 
+                                                 `asimptomatică - ușoară` = c("asymptomatic", "mild"),
+                                                 `medie - severă` = c("intermediate", "severe", "critical")) %>%
+           factor(levels=c("asimptomatică - ușoară", "medie - severă")) ) %>%
+  mutate(`Severitate` = forcats::fct_collapse(`Clinical form`, 
+                                              `asimptomatică` = c("asymptomatic"),
+                                              `ușoară` = c("mild"),
+                                              `medie` = c("intermediate"),
+                                              `severă` = c("severe", "critical")) %>%
+           factor(levels=c("asimptomatică", "ușoară", "medie", "severă"))) %>%
+  merge(last_status_IgM, by="FO") 
+```
+
+```{r echo=F, fig.height=3, fig.width=5, message=F, warning=F, dpi=600, results="asis", include=T}
+plt1_IgM <- DB2_IgM %>%
+  my_surv_plot(by="Severitate", Time = "Days since confirmation", 
+               Status = "Stauts at test #5", Status_event = "detectable",
+               conf.int.alpha = 0.025, lwd = 1, median.lwd = 0.33,
+               metadata = metadata)
+
+
+# summary(attr(plt1, "fit2"))
+hr.table_IgM <- attr(plt1_IgM, "fit2") %>% broom::tidy() %>% cbind( attr(plt1_IgM, "fit2") %>% broom::confint_tidy()) %>%
+  mutate(`HR` = 1/exp(estimate), LCL = 1/exp(conf.high), UCL = 1/exp(conf.low),
+         `p-value` = scales::pvalue(p.value, add_p = T), `p-stars` = pstars(p.value),
+         factor = str_remove_all(term, "Severitate") %>% factor(levels = levels(DB2_IgM$`Severitate`))) %>%
+  mutate(label = limit_between(`HR`) %+% 
+           " [" %+% limit_between(`LCL`) %+% " - " %+% limit_between(`UCL`) %+% "] " %+%
+           `p-stars`)
+
+plt1_IgM <- plt1_IgM + scale_color_brewer("Severitate (1/HR, 95% CI, p)", palette = "Spectral", aesthetics = c("color", "fill"), direction = -1,
+                          labels = c("asimptomatică vs.", "ușoară: ", "medie: ", "severă: ") %+%
+                            c("", hr.table_IgM$label)) +
+  scale_x_continuous("Durata până la pozitivarea IgM (zile)",
+                     expand = expand_scale(mult=0.01),
+                    limits=c(0, 49), breaks=seq(0, 49, 7))+
+  scale_y_continuous("Proporția de cazuri (%)", expand = expand_scale(mult=0.01),
+                     breaks = seq(0, 1, 0.1), labels = scales::percent_format(1) ) +
+  theme(legend.key.width = unit(10, "mm"))
+  
+
+
+plt1_IgM
+ggsave("KM1_IgM.png", plt1_IgM, device = "png", height=3, width=5, units = "in", dpi=600)
+
+
+cat("\n\n")
+cat(fig_caption("KM IgM 1", "Reverse cummulative distribution (Kaplan Meier) plot of IgM positivation rate (first value > 0.8) by time since confirmation and severity. Dates were calculated to the first negative PCR result. Also shown: invese hazard-ratio comparing all severities to asymptomatic, with 95% CI and statistical signifficance; overall log-rank test."))
+cat("\n\n")
+
+```
+
+```{r echo=F, fig.height=3, fig.width=5, message=F, warning=F, dpi=600, results="asis", include=T}
+plt2_IgM <- DB2_IgM %>%
+  my_surv_plot(by="Forma clinică", Time = "Days since confirmation", 
+               Status = "Stauts at test #5", Status_event = "detectable",
+               hr_config_bin = "vs first", show_logrank = F, 
+               conf.int.alpha = 0.1, lwd = 1, median.lwd = 0.33,
+               metadata = metadata)
+
+
+# plt2_IgM
+# summary(attr(plt2_IgM, "fit2"))
+hr.table_IgM <- attr(plt2_IgM, "fit2") %>% broom::tidy() %>% cbind( attr(plt2_IgM, "fit2") %>% broom::confint_tidy()) %>%
+  mutate(`HR` = 1/exp(estimate), LCL = 1/exp(conf.high), UCL = 1/exp(conf.low),
+         `p-value` = scales::pvalue(p.value, add_p = T), `p-stars` = pstars(p.value),
+         factor = str_remove_all(term, "Forma clinică") %>% factor(levels = levels(DB2_IgM$`Forma clinică`))) %>%
+  mutate(label = "HR = " %+% limit_between(`HR`) %+% 
+           " [" %+% limit_between(`LCL`) %+% " - " %+% limit_between(`UCL`) %+% "]\nLog-rank: " %+%
+           `p-value`)
+
+plt2_IgM <- plt2_IgM + scale_color_brewer("Severitate", palette = "Set2", direction = 1,
+                                  aesthetics = c("color", "fill"),
+                                  labels = c("asimptomatică - ușoară vs.", "medie - severă:")) +
+  scale_x_continuous("Durata până la pozitivarea IgM (zile)",
+                     expand = expand_scale(mult=0.01),
+                    limits=c(0, 49), breaks=seq(0, 49, 7))+
+  scale_y_continuous("Proporția de cazuri (%)", expand = expand_scale(mult=0.01),
+                     breaks = seq(0, 1, 0.1), labels = scales::percent_format(1) ) +
+  # guides(color = guide_legend(label.vjust = 0, keyheight = unit(5, "mm"), ))+
+  theme(legend.key.width = unit(10, "mm")) +
+  annotate("text", x=26, y=0.77, hjust=0, vjust=1, label = hr.table_IgM$label[1], size=3, fontface = 'italic')
+  
+
+plt2_IgM
+ggsave("KM2_IgM.png", plt2_IgM, device = "png", height=3, width=5, units = "in", dpi=600)
+
+cat("\n\n")
+cat(fig_caption("KM IgM 2", "Reverse cummulative distribution (Kaplan Meier) plot of IgM positivation rate (first value > 0.8) by time since confirmation and severity. Dates were calculated to the first negative PCR result. Also shown: invese hazard-ratio comparing more severe forms to asymptomatic - mild, with 95% CI and log-rank test."))
+cat("\n\n")
+```
+
+
+### IgG
+
+```{r echo=F, fig.height=3, fig.width=5, message=F, warning=F, dpi=600, results="asis", include=T}
+
+
+last_status_IgG <- 
+  DB %>% select(c("FO", "Days since confirmation", "IgG")) %>% na.omit() %>%
+    mutate(`IgG positive` = ifelse(`IgG`>0.8, "detectable", "negative")) %>%
+    arrange(`FO`, `Days since confirmation`) %>%
+    mutate(key = `IgG positive` %+% " " %+% `Days since confirmation`) %>%
+    group_by(`FO`) %>%
+    summarise(`key` = first_match_or_last_known(`key`, "detectable")) %>% # na.omit() %>%
+    tidyr::separate(col="key", into=c("Stauts at test #5", "Days since confirmation"), convert=T) %>%
+    mutate(`Stauts at test #5` = factor(`Stauts at test #5`, levels=c("detectable", "negative")))
+
+DB2_IgG <- baza_de_date %>%
+  select(c("FO", "Clinical form")) %>%
+  mutate(`Forma clinică` = forcats::fct_collapse(`Clinical form`, 
+                                                 `asimptomatică - ușoară` = c("asymptomatic", "mild"),
+                                                 `medie - severă` = c("intermediate", "severe", "critical")) %>%
+           factor(levels=c("asimptomatică - ușoară", "medie - severă")) ) %>%
+  mutate(`Severitate` = forcats::fct_collapse(`Clinical form`, 
+                                              `asimptomatică` = c("asymptomatic"),
+                                              `ușoară` = c("mild"),
+                                              `medie` = c("intermediate"),
+                                              `severă` = c("severe", "critical")) %>%
+           factor(levels=c("asimptomatică", "ușoară", "medie", "severă"))) %>%
+  merge(last_status_IgG, by="FO") 
+```
+
+```{r echo=F, fig.height=3, fig.width=5, message=F, warning=F, dpi=600, results="asis", include=T}
+plt1_IgG <- DB2_IgG %>%
+  my_surv_plot(by="Severitate", Time = "Days since confirmation", 
+               Status = "Stauts at test #5", Status_event = "detectable",
+               conf.int.alpha = 0.025, lwd = 1, median.lwd = 0.33,
+               metadata = metadata)
+
+
+# summary(attr(plt1, "fit2"))
+hr.table_IgG <- attr(plt1_IgG, "fit2") %>% broom::tidy() %>% cbind( attr(plt1_IgG, "fit2") %>% broom::confint_tidy()) %>%
+  mutate(`HR` = 1/exp(estimate), LCL = 1/exp(conf.high), UCL = 1/exp(conf.low),
+         `p-value` = scales::pvalue(p.value, add_p = T), `p-stars` = pstars(p.value),
+         factor = str_remove_all(term, "Severitate") %>% factor(levels = levels(DB2_IgG$`Severitate`))) %>%
+  mutate(label = limit_between(`HR`) %+% 
+           " [" %+% limit_between(`LCL`) %+% " - " %+% limit_between(`UCL`) %+% "] " %+%
+           `p-stars`)
+
+plt1_IgG <- plt1_IgG + scale_color_brewer("Severitate (1/HR, 95% CI, p)", palette = "Spectral", aesthetics = c("color", "fill"), direction = -1,
+                          labels = c("asimptomatică vs.", "ușoară: ", "medie: ", "severă: ") %+%
+                            c("", hr.table_IgG$label)) +
+  scale_x_continuous("Durata până la pozitivarea IgG (zile)",
+                     expand = expand_scale(mult=0.01),
+                    limits=c(0, 49), breaks=seq(0, 49, 7))+
+  scale_y_continuous("Proporția de cazuri (%)", expand = expand_scale(mult=0.01),
+                     breaks = seq(0, 1, 0.1), labels = scales::percent_format(1) ) +
+  theme(legend.key.width = unit(10, "mm"))
+  
+
+
+plt1_IgG
+ggsave("KM1_IgG.png", plt1_IgG, device = "png", height=3, width=5, units = "in", dpi=600)
+
+
+cat("\n\n")
+cat(fig_caption("KM IgG 1", "Reverse cummulative distribution (Kaplan Meier) plot of IgG positivation rate (first value > 0.8) by time since confirmation and severity. Dates were calculated to the first negative PCR result. Also shown: invese hazard-ratio comparing all severities to asymptomatic, with 95% CI and statistical signifficance; overall log-rank test."))
+cat("\n\n")
+
+```
+
+```{r echo=F, fig.height=3, fig.width=5, message=F, warning=F, dpi=600, results="asis", include=T}
+plt2_IgG <- DB2_IgG %>%
+  my_surv_plot(by="Forma clinică", Time = "Days since confirmation", 
+               Status = "Stauts at test #5", Status_event = "detectable", 
+               hr_config_bin = "vs first", show_logrank = F, 
+               conf.int.alpha = 0.1, lwd = 1, median.lwd = 0.33,
+               metadata = metadata)
+
+
+# plt2_IgG
+# summary(attr(plt2_IgG, "fit2"))
+hr.table_IgG <- attr(plt2_IgG, "fit2") %>% broom::tidy() %>% cbind( attr(plt2_IgG, "fit2") %>% broom::confint_tidy()) %>%
+  mutate(`HR` = 1/exp(estimate), LCL = 1/exp(conf.high), UCL = 1/exp(conf.low),
+         `p-value` = scales::pvalue(p.value, add_p = T), `p-stars` = pstars(p.value),
+         factor = str_remove_all(term, "Forma clinică") %>% factor(levels = levels(DB2_IgG$`Forma clinică`))) %>%
+  mutate(label = "HR = " %+% limit_between(`HR`) %+% 
+           " [" %+% limit_between(`LCL`) %+% " - " %+% limit_between(`UCL`) %+% "]\nLog-rank: " %+%
+           `p-value`)
+
+plt2_IgG <- plt2_IgG + scale_color_brewer("Severitate", palette = "Set2", direction = 1,
+                                  aesthetics = c("color", "fill"),
+                                  labels = c("asimptomatică - ușoară vs.", "medie - severă:")) +
+  scale_x_continuous("Durata până la pozitivarea IgG (zile)",
+                     expand = expand_scale(mult=0.01),
+                    limits=c(0, 49), breaks=seq(0, 49, 7))+
+  scale_y_continuous("Proporția de cazuri (%)", expand = expand_scale(mult=0.01),
+                     breaks = seq(0, 1, 0.1), labels = scales::percent_format(1) ) +
+  # guides(color = guide_legend(label.vjust = 0, keyheight = unit(5, "mm"), ))+
+  theme(legend.key.width = unit(10, "mm")) +
+  annotate("text", x=26, y=0.77, hjust=0, vjust=1, label = hr.table_IgG$label[1], size=3, fontface = 'italic')
+  
+
+plt2_IgG
+ggsave("KM2_IgG.png", plt2_IgG, device = "png", height=3, width=5, units = "in", dpi=600)
+
+cat("\n\n")
+cat(fig_caption("KM IgG 2", "Reverse cummulative distribution (Kaplan Meier) plot of IgG positivation rate (first value > 0.8) by time since confirmation and severity. Dates were calculated to the first negative PCR result. Also shown: invese hazard-ratio comparing more severe forms to asymptomatic - mild, with 95% CI and log-rank test."))
+cat("\n\n")
+```
+
+# References
+
+1. R Core Team (2020). R: A language and environment for statistical computing. R Foundation for Statistical Computing, Vienna, Austria. URL https://www.R-project.org/.
+
